@@ -1,0 +1,3 @@
+*.arm filter=lfs diff=lfs merge=lfs -text
+*.genFORC filter=lfs diff=lfs merge=lfs -text
+*.frc filter=lfs diff=lfs merge=lfs -text
