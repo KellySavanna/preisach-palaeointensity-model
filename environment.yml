@@ -1,0 +1,18 @@
+name: palaeo-env
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - matplotlib
+  - numba
+  - ipywidgets
+  - jupyterlab  # optional if you want notebooks to run
+  - pip
+  - pip:
+      # Add any packages not on conda-forge here
+      # e.g., specific versions from PyPI
+      - notebook
+
