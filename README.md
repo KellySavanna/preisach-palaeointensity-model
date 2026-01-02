@@ -5,6 +5,10 @@ The project aims to develop paleointensity estimation methods which use FORC and
 
 The code allows you to obtain the estimates from FORC and SORC-type (remFORC), as well as the plotted materials. The code is user-led and allows for parameters to be changed as desired. The repo includes sample data for both the auto-run notebooks and the manual notebooks.
 
+### Project Abstract
+
+Accurate palaeointensity estimates are essential for reconstructing the past geomagnetic field, but traditional Thellier‑type methods use repeated heating steps and suffer from thermal alteration and hence experience high rejection rates. Isothermal alternatives avoid alteration by measuring palaeointensity at ambient temperatures, however, they remain challenging from a theoretical standpoint. In this study, I evaluate an isothermal palaeointensity estimation technique, based on the Preisach model, which takes first‑order reversal curve (FORC) data as the input, simulates NRM and SIRM acquisition, and inverts for a best-proxy ancient field. I test two potential improvements to this approach, against both the original Preisach method and a development of the earliest isothermal proxy, REM'. (1) replacing FORCs (in‑field measurement) with  remFORCs (zero-field measurement), the latter of which emphasises the remanent component and suppresses reversible contributions; and (2) testing ARM normalisation as an alternative for SIRM normalisation, which is hypothesised to better mimic NRM acquisition. I apply the original and new methods to recent lava flows with known ('true') fields, comparing the palaeointensity estimates, measured-simulated curves and AF‑step behaviours of the final NRM/normaliser.  The remFORC input often produced similar results to the FORC input across samples, suggesting that any improvements from reduced transience in the remFORC was offset by the coarser resolution. ARM normalisation systematically underestimated the palaeointensity estimate. However, the method produced clearer plateaus suggesting better agreement between ARM and NRM spectra, and better matching of measured-simulated data. Overall, ARM produced much lower standard deviations than SIRM, both for the selected AF-steps (sample plateaus) and for site wide averages, implying potential for improved estimates should the systemic underestimation be a methodological problem rather than a theoretical violation, i.e., due to the mixed domain state of the magnetic grains. The Preisach model modifications tested here show promise as an improved isothermal estimate for palaeointensity, particularly the use of ARM as a normaliser, but significant refinements and larger test datasets are required before it can be considered a robust method for natural samples.
+
 ### Using the code
 
 The code is provided in the form of jupyter notebooks and .py files, to be run by conda/anaconda navigator.
@@ -21,7 +25,7 @@ conda env create -f environment.yml
 ```
 3. Activate environment
 ```bash
-conda activate paleo-env
+conda activate palaeo-env
 ```
 
 ### Running notebooks
