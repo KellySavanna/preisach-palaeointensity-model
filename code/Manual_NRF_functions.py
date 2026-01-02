@@ -50,12 +50,12 @@ from pathlib import Path
 def find_files(X):
     """
     Search for and collect data files for a user-specified sample.
-    
+
     This function:
     - Prompts the user for a sample name.
-    - Searches the current working directory and subfolders for .gen, .nrm, and .sirm files.
+    - Searches the current working directory and subfolders for .genFORC, .nrm, .arm, and .sirm files.
     - Updates the dictionary X with file paths and sample information.
-    - Checks or creates the results file 'paleo_results.dat' and tracks previous runs.
+    - Checks or creates the results file 'paleo_results_nrf.dat' and tracks previous runs.
     - Creates a folder for the current attempt if it doesn't exist.
     - Calls field_range(X) at the end to update field limits.
 
@@ -70,133 +70,178 @@ def find_files(X):
         Updated dictionary with sample file paths and metadata.
     """
 
+    import os
+    import re
+    import time
+
     # Get current working directory
     path = os.getcwd()
-    # path = os.path.join(path+os.sep,'raw_data')  # commented out alternative path
 
-    # Initialize search flags for .gen, .nrm, and .sirm files
-    search1 = 0
-    search2 = 0
-    search3 = 0
+    # initialize
+    X['sample_copy'] = 1
 
     # Loop until all required files are found
-    while (search1 == 0) or (search2 == 0) or (search3 == 0):
-        try: 
+    while True:
+        try:
             # Prompt user for sample name
-            input_name = input('Please enter the sample name: ')
+            input_name = input('Please enter the sample name: ').strip()
+            if not input_name:
+                print("Empty sample name entered — try again.")
+                continue
+
             names = []
-            i = 0
 
-            # Search for .gen files and collect sample names
-            for root, dir, file in os.walk(path): 
-                for f in file:
-                    if re.match('{}.gen'.format(input_name), f):
-                        names.append(f[:-4])
+            # Search for .genFORC files and collect sample names
+            gen_files = []
+            for root, dirs, files in os.walk(path):
+                for f in files:
+                    # case-insensitive check: startswith input_name and endswith .genforc
+                    if f.lower().startswith(input_name.lower()) and f.lower().endswith('.genforc'):
+                        gen_files.append(os.path.join(root, f))
+                        names.append(f)
+            if not names:
+                print(f"No .genFORC (FORC) files found for sample '{input_name}'.")
+            else:
+                # print a friendly sample label (safe guard)
+                print('Sample to test:', names[0])
+
+            # Search for .nrm files
+            nrm_files = []
+            for root, dirs, files in os.walk(path):
+                for f in files:
+                    if f.lower().startswith(input_name.lower()) and f.lower().endswith('.nrm'):
+                        nrm_files.append(os.path.join(root, f))
+            if not nrm_files:
+                print(f"No .nrm files found for sample '{input_name}'.")
+
+            # Search for .arm files
+            arm_files = []
+            for root, dirs, files in os.walk(path):
+                for f in files:
+                    if f.lower().startswith(input_name.lower()) and f.lower().endswith('.arm'):
+                        arm_files.append(os.path.join(root, f))
+            if not arm_files:
+                print(f"No .arm files found for sample '{input_name}'.")
+
+            # Search for .sirm files
+            sirm_files = []
+            for root, dirs, files in os.walk(path):
+                for f in files:
+                    if f.lower().startswith(input_name.lower()) and f.lower().endswith('.sirm'):
+                        sirm_files.append(os.path.join(root, f))
+            if not sirm_files:
+                print(f"No .sirm files found for sample '{input_name}'.")
+
+            # Determine whether we have the required files.
+            # If some of these are optional for your pipeline, adjust this condition accordingly.
+            search_gen = len(gen_files) > 0
+            search_nrm = len(nrm_files) > 0
+            search_arm = len(arm_files) > 0
+            search_sirm = len(sirm_files) > 0
+
+            # If any required file is missing, prompt again
+            if not (search_gen and search_nrm and search_arm and search_sirm):
+                print("One or more required file types are missing. Re-enter the sample name or fix filenames.")
+                # small pause to avoid fast loop
+                time.sleep(0.5)
+                continue
+
+            # Prepare results file and sample attempt count
+            results_filename = "paleo_results_nrf.dat"
+            results_path = os.path.join(os.getcwd(), results_filename)
+            sample_copy = 1
+
+            if os.path.exists(results_path):
+                with open(results_path, 'r') as bigf:
+                    header = bigf.readline()  # skip header (if present)
+                    for my_line in bigf:
+                        if not my_line.strip():
+                            continue
+                        parts = my_line.split('\t')
+                        if len(parts) == 0:
+                            continue
+                        # match sample name (case-insensitive) — use input_name instead of undefined `sample`
+                        if parts[0].strip().lower() == input_name.lower():
+                            sample_copy += 1
+                            try:
+                                # protect against missing columns / bad formatting
+                                if len(parts) > 1:
+                                    X['min_field'] = float(parts[1])
+                                if len(parts) > 2:
+                                    X['max_field'] = float(parts[2])
+                                if len(parts) > 3:
+                                    X['nat_cool'] = float(parts[3])
+                            except (IndexError, ValueError):
+                                print(f"[WARN] Existing record format mismatch for {input_name}: {my_line.strip()}")
+            else:
+                # Create file with NEW header
+                with open(results_path, 'w') as bigf:
+                    bigf.write(
+                        "Sample\tMinField\tMaxField\tCoolingTime\t"
+                        "ARM_D_field(µT)\tCurieTemp\tSF\tAFpick\t"
+                        "Plateau_SIRM\tSlope_SIRM\tSIRM_mean_PI\tSIRM_std\tSIRM_median_PI\tSIRM_iqr\tSIRM_lit_1500_PI\t"
+                        "Plateau_ARM\tSlope_ARM\tARM_mean_PI\tARM_std\tARM_median_PI\tARM_iqr\tARM_lit_1500_PI\n"
+                    )
+
+            # Save discovered file lists and metadata to X
+            X['fn'] = gen_files[0]   # first FORC file
+            X['nrm_files'] = nrm_files
+            X['arm_files'] = arm_files
+            X['sirm_files'] = sirm_files
             X['names'] = names
-            print('Sample to test:', names[0])
-
-            # Search for FORC (.gen) files and store paths
-            forc_file = []
-            i = 0
-            for root, dir, file in os.walk(path):
-                for f in file:
-                    if re.match('{}.gen'.format(input_name), f):
-                        forc_file.append(os.path.join(root + os.sep,f))
-                        search1 = 1
-                        i += 1
-            X['fn'] = forc_file[0]
-            if (i == 0):
-                print('No FORC diagram can be found for sample {}'.format(input_name))
-
-            # Search for NRM (.nrm) files and store paths
-            nrm_file = []
-            i = 0
-            for root, dir, file in os.walk(path):
-                for f in file:
-                    if re.match('{}.nrm'.format(input_name), f):
-                        nrm_file.append(os.path.join(root + os.sep,f))
-                        search2 = 1
-                        i += 1
-            if (i == 0):
-                print('No NRM file can be found for sample {}'.format(input_name))
-            X['nrm_files'] = nrm_file
-            
-            # search for arm file
-            arm_file = []
-            i =0
-            for root, dir, file in os.walk(path):
-            
-                for f in file:
-                    if re.match('{}.arm'.format(input_name), f):
-                        arm_file.append(os.path.join(root + os.sep,f))
-                        search2 = 1
-                        i+=1
-            if (i==0):
-                print('No ARM file can be found for sample {}'.format(input_name))
-
-            X['arm_files'] = arm_file
-
-
-            # Search for SIRM (.sirm) files and store paths
-            sirm_file = []
-            i = 0  # Reset counter to avoid overwriting previous counts
-            for root, dir, file in os.walk(path):
-                for f in file:
-                    if re.match('{}.sirm'.format(input_name), f):
-                        sirm_file.append(os.path.join(root + os.sep,f))
-                        search3 = 1
-                        i += 1
-            if (i == 0):
-                print('No SIRM file can be found for sample {}'.format(input_name))
-            X['sirm_files'] = sirm_file    
-
-            # Check if results file exists
-            file_exists = os.path.exists('paleo_results.dat')
-            sample_copy = 1    
-            if (file_exists == True):
-                # Open and read existing results file to count previous runs
-                bigf = open('paleo_results.dat', 'r')
-                bigf.readline()  # skip header line
-                for my_line in bigf:
-                    line = my_line.split('\t')  # tab-delimited
-                    if (line[0] == names[0]):
-                        sample_copy += 1
-                        # Load previous variables from the file
-                        X['min_field'] = float(line[10])
-                        X['max_field'] = float(line[11])
-                        X['nat_cool'] = float(line[12])
-                        X['curie_t'] = float(line[13])
-                        X['afval'] = float(line[14])
-                        X['SF'] = float(line[15])
-                        X['reset_limit_hc'] = float(line[16])
-                        X['reset_limit_hi'] = float(line[17])   
-                        X['sf_list_correct'] = float(line[18])             
-            else:
-                # Create results file with header if it doesn't exist
-                bigf = open('paleo_results.dat', 'w') 
-                bigf.write('Sample name \t Repeat \t AF steps \t Range \t AF min \t AF max \t mean PI \t std mean \t median \t iqr median \t Min field \t Max field \t cooling time \t curie temp \t AF value \t SF \t max hc \t max hi \t SF_factor \n')
-            bigf.close()  # Close file
-
-            # Store number of attempts for this sample
             X['sample_copy'] = sample_copy
+            X['results_path'] = results_path
+            X['sample_name'] = input_name
 
-            # Create folder for this attempt if it doesn't exist
-            if (os.path.exists(os.path.join(os.getcwd(), 'sample_{}_V_{}'.format(names[0], str(X['sample_copy']))))):
-                pass
-            else:
-                os.mkdir('sample_{}_V_{}'.format(names[0], str(X['sample_copy'])))
-            
-            print('Attempt {} of running sample {}'.format(sample_copy, names[0]))
-
-            # Update field ranges using external function
+            # Call field_range to set min/max fields (function must exist in scope)
             X = field_range(X)
 
-        except:
-            # Wait and prompt again if files not found
+            # If we got here, everything succeeded — return X
+            return X
+
+        except Exception as e:
+            # show the real error for debugging, then prompt again
+            print(f"Error while finding files: {e!r}")
             time.sleep(1)
             print('No files for that sample name, re-enter sample name')
 
-    return X
+def write_out_data(X, V):
+    
+        results_path = X['results_path']
+        sirm_index = V['sirm_selected_plateau']
+        arm_index = V['arm_selected_plateau']
+        af_step = X['af_step']
+        low, high = sirm_index
+        sirm_plat = (round(af_step[low], 2), round(af_step[high], 2))
+        low2, high2 = arm_index
+        arm_plat = (round(af_step[low2], 2), round(af_step[high2], 2)) 
+                                                   
+        with open(results_path, 'a') as bigf:
+            bigf.write(
+               f"{X.get('sample_name', 'NA')}\t"
+               f"{X.get('min_field', 'NA')}\t"
+               f"{X.get('max_field', 'NA')}\t"
+               f"{X.get('nat_cool', 'NA')}\t"
+               f"{X.get('arm_bias_uT', 'NA')}\t"
+               f"{X.get('curie_t', 'NA')}\t"
+               f"{X.get('SF', 'NA')}\t"
+               f"{X.get('af_pick', 'NA')}\t"
+               f"{sirm_plat}\t"
+               f"{V.get('sirm_slope', 'NA')}\t"
+               f"{V.get('sirm_selected_mean', 'NA'):.3f}\t"
+               f"{V.get('sirm_selected_std', 'NA'):.3f}\t"
+               f"{V.get('sirm_selected_median', 'NA'):.3f}\t"
+               f"{V.get('sirm_selected_iqr', 'NA'):.3f}\t"
+               f"{V.get('sirm_1500_PI_mean', 'NA'):.3f}\t"
+               f"{arm_plat}\t"
+               f"{V.get('arm_slope', 'NA')}\t"
+               f"{V.get('arm_selected_mean', 'NA'):.3f}\t"
+               f"{V.get('arm_selected_std', 'NA'):.3f}\t"
+               f"{V.get('arm_selected_median', 'NA'):.3f}\t"
+               f"{V.get('arm_selected_iqr', 'NA'):.3f}\n"
+               f"{V.get('arm_1500_PI_mean', 'NA'):.3f}\t"
+           )
+        return 
 
 
 # ====== classes ======
@@ -1320,7 +1365,7 @@ def find_plot_fwhm(X):
         # Plot points color-coded the same as plot 1
         for i, sf in enumerate(polySF):
             color = color_cycle[int(sf-2) % 10]  # same mapping as plot1 (SF 2->0, 3->1 ...)
-            ax2.scatter(sf, polyfwhm[i]*1000, color=color, s=60, label=f'SF={SF}')
+            ax2.scatter(sf, polyfwhm[i]*1000, color=color, s=60, label=f'SF={sf}')
         
    
         ax2.set_title('Smoothing factor (SF) vs FWHM using SF 2-5')
@@ -1582,8 +1627,8 @@ def plot_sample_FORC(x, y, z, SF, sample_name, hcmaxa, himina):
     ax.contour(xp, yp, zn, con, colors='k', linewidths=0.6)
     
     # Axis labels
-    ax.set_xlabel(r'$\mathrm{h_{c}}$ (mT)', fontsize=14)
-    ax.set_ylabel(r'$\mathrm{h_{s}}$ (mT)', fontsize=14)
+    ax.set_xlabel(r'$\mathrm{B_{a}}$ (mT)', fontsize=14)
+    ax.set_ylabel(r'$\mathrm{B_{b}}$ (mT)', fontsize=14)
 
     # Axis limits
     ax.set_xlim(0, hcmaxa)
@@ -1599,14 +1644,16 @@ def plot_sample_FORC(x, y, z, SF, sample_name, hcmaxa, himina):
     cbar.set_label('Normalized Rho', fontsize=12)
     
     #ax.plot([0, hcmaxa], [0, 0], 'k--', linewidth=1)          
-    ax.plot([0, hcmaxa], [0, himina], 'k--', linewidth=1, label='$H_c$')   
+    #ax.plot([0, hcmaxa], [0, himina], 'k--', linewidth=1, alpha = 0.5, label='$B_c$')
+    #ax.plot([0, hcmaxa], [0, hcmaxa], 'k-', linewidth=1, alpha = 0.5, label='$B_i$')
 
     # Title
     ax.set_title(f'{sample_name} FORC diagram, SF = {SF}', fontsize=16)
 
     # Layout adjustment
+    
     plt.tight_layout()
-    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.grid(True, alpha=0.2)
     plt.legend()
 
     # Save figure
@@ -2138,7 +2185,7 @@ def user_input(X):
         while (quest_res == 0):
             # Ask whether user wants to modify hc and hi
             quest = input(
-                'Do you want to change the maximum hc and/or hi value from max hc = {} and min hi = {} from the FORC file? (Y or N)'.format(
+                'Do you want to change the maximum Ba and/or Bb value from max Ba = {} and min Bb = {} from the FORC file? (Y or N)'.format(
                     int(X['hcmaxa']), int(X['himina'])
                 )
             )
@@ -2150,7 +2197,7 @@ def user_input(X):
                 hc_l = 0
                 while (hc_l == 0):                
                     try:
-                        max_input_hc = input("Set maximum hc (mT) using the above FORC diagram, if unchanged enter 0:" )
+                        max_input_hc = input("Set maximum Ba (mT) using the above FORC diagram, if unchanged enter 0:" )
                         max_input_hc = float(max_input_hc)
                         if (max_input_hc == 0):
                             max_input_hc = X['hcmaxa']                            
@@ -2163,7 +2210,7 @@ def user_input(X):
                 hi_l = 0
                 while (hi_l == 0):
                     try:
-                        max_input_hi = input("Set minimum hs (mT) using the above FORC diagram, if unchanged enter 0:" )
+                        max_input_hi = input("Set minimum Bb (mT) using the above FORC diagram, if unchanged enter 0:" )
                         max_input_hi = float(max_input_hi)
                         if (max_input_hi == 0):
                             max_input_hi = X['himina']              
@@ -2175,7 +2222,7 @@ def user_input(X):
                 # Update the dictionary with new limits
                 X['hcmaxa'] = float(max_input_hc)
                 X['himina'] = float(max_input_hi)
-                print('FORC limits: Max hc = {}, max hi = {}'.format(X['hcmaxa'], X['himina']))          
+                print('FORC limits: Max Ba = {}, max Bb = {}'.format(X['hcmaxa'], X['himina']))          
 
                 # Re-plot the FORC diagram with the new limits
                 plot_sample_FORC(X['xia'], X['yia'], X['zia'], X['SF'], X['name'], X['hcmaxa'], X['himina'])
@@ -3306,45 +3353,24 @@ def plot_zplot(X):
     c_l = 0
 
     # -------------------- Handle Curie temperature --------------------
-    if X['sample_copy'] > 1:
-        cur_1 = input(
-            f"The most recent Curie temperature used for sample {X['names'][0]} was {X['curie_t']}°C. "
-            "Enter K to reuse it, or any other character to input a new value: "
-        )
-    else:
-        cur_1 = 'L'
-    
-    if cur_1 != 'K' or X['sample_copy'] < 2:
-        while c_l == 0:
-            try:
-                curie_t = float(input("Input Curie temperature in °C: "))
-                c_l = 1
-            except ValueError:
-                print('Not a number. Please input a number.')
-        X['curie_t'] = curie_t
 
-    # -------------------- Handle AF step reuse --------------------
-    if X['sample_copy'] > 1:
-        afval_1 = input(
-            f"The most recent AF step used for sample {X['names'][0]} was {X['afval']} mT. "
-            "Enter K to reuse it, or any other character to show the Zplot: "
-        )
-    else:
-        afval_1 = 'L'
+    afval_1 = 1
 
-    # -------------------- Normalize AF NRM and convert to Cartesian --------------------
-    if afval_1 != 'K' or X['sample_copy'] < 2:
+    curie_t = float(input("Input Curie temperature in °C: "))
+    X['curie_t'] = curie_t
+
+
+
+    if afval_1 != 'K':
         norm_int = X['af_nrm'] / X['af_nrm'][0]
         n_nrm = norm_int * np.cos(X['af_nrm_dec']*pi/180) * np.cos(X['af_nrm_inc']*pi/180)
         e_nrm = norm_int * np.sin(X['af_nrm_dec']*pi/180) * np.cos(X['af_nrm_inc']*pi/180)
         u_nrm = -norm_int * np.sin(X['af_nrm_inc']*pi/180)
         h_nrm = np.sqrt(n_nrm**2 + e_nrm**2)
         af_step = np.copy(X['af_step'])
-
         # -------------------- Plotting --------------------
         plt.rcParams.update({'font.family': 'sans-serif', 'font.size': 12})
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
-
         # Horizontal projection (E,N vs N,U)
         ax1.plot(e_nrm, n_nrm, 's-', color='blue', markersize=5, linewidth=1, label='E, N')
         ax1.plot(n_nrm, u_nrm, 's-', color='red', markersize=5, linewidth=1, label='N, U')
@@ -3382,7 +3408,6 @@ def plot_zplot(X):
         ax2.legend()
         ax2.spines['top'].set_visible(False)
         ax2.spines['right'].set_visible(False)
-
         # Force axes through zero
         ax2.spines['left'].set_position('zero')
         ax2.spines['bottom'].set_position('zero')
@@ -3390,16 +3415,13 @@ def plot_zplot(X):
         ax2.spines['right'].set_visible(False)
         ax2.xaxis.set_ticks_position('bottom')
         ax2.yaxis.set_ticks_position('left')
-
         plt.suptitle(f'Normalized Zijderveld plots for sample {X["name"]}', fontsize=16)
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-
         # Save plot as PDF
         filename = os.path.join(f'{X["name"]}_nrf', f'zijderveld_plot_{X["name"]}.pdf')
         os.makedirs(os.path.dirname(filename), exist_ok=True)
         plt.savefig(filename)
         plt.show()
-
         # -------------------- User selects AF step --------------------
         cntfield = X['cntfield']
         while True:
@@ -3413,14 +3435,14 @@ def plot_zplot(X):
         X['af_pick'] = int(afpick)
         X['afval'] = afval
         print('Selected AF step:', afval)
-
+ 
     else:
         afpick = np.where(X['af_step'] == float(X['afval']))[0][0]
         X['af_pick'] = int(afpick)
         print('Selected AF step:', X['afval'])
 
     return X
-        
+      
     
 
 def pick_SF(X):
@@ -3963,13 +3985,19 @@ def fin_pal_SIRM_auto(X, V):
     plt.show()
     plt.pause(1)
 
+    # get stats for the chosen plateau
+    candidates.sort(key=lambda c: (abs(c['slope']), c['resid_std'], c['norm_slope']))
+    best = candidates[0]
+    lo, hi = best['af_range']
+
     # write PI values to text file
     vals_filename = os.path.join(outdir, f'PI_SIRM_values_{name}.txt')
     with open(vals_filename, 'w') as paleo_data:
         for i in range(len(af_step)):
             paleo_data.write(f"{name}\t{af_step[i]}\t{ys[i]}\n")
             
-        paleo_data.write("\n Plateau selection averages")
+        paleo_data.write("\n Plateau selection averages\n")
+        paleo_data.write(f"Best plateau: AF {lo:.2f}–{hi:.2f} mT | slope={best['slope']:.3g} ± {best['slope_se']:.3g}, \n")
         paleo_data.write(f'median: {selected_med:.2f} μT\n')
         paleo_data.write(f'mean: {selected_mean:.2f} ± {mean_dev:.2f} μT\n')
 
@@ -3979,6 +4007,8 @@ def fin_pal_SIRM_auto(X, V):
     V['sirm_selected_std'] = float(mean_dev)
     V['sirm_selected_median'] = float(selected_med)
     V['sirm_selected_iqr'] = float(iqr)
+    V['sirm_1500_PI_mean'] = np.mean(V['sirm_ys_lit_1500'][low_b:up_b+1])
+    V['sirm_slope'] = round(best['slope'], 3)
 
     return
 
@@ -4016,7 +4046,8 @@ def fin_pal_ARM_auto(X, V):
     af_step = X['af_step']  # AF demagnetization steps
     name = X['name']       # sample name
     cntfield = X['cntfield']  
-    demagstep = X['af_step']  
+    demagstep = X['af_step'] 
+    afpick = X['af_pick']
 
     # print AF steps for user reference
     print('AF Demag spectra for the ARM (use to pick the AF steps)')
@@ -4121,6 +4152,11 @@ def fin_pal_ARM_auto(X, V):
     # (b) ARM checks: S_ratio and S_diff
     ax2.plot(af_step, V.get('arm_shortdiv', np.zeros_like(af_step)), marker='o', color='r', label='S$_{ratio}$')
     ax2.plot(af_step, V.get('arm_shortminus', np.zeros_like(af_step)), marker='o', color='b', label='S$_{diff}$')
+    af_step_list = af_step
+    ax2.plot(af_step_list, [20]*len(af_step_list), 'b')
+    ax2.plot(af_step_list, [100]*len(af_step_list), 'r')
+    ax2.plot([af_step_list[0], af_step_list[-1]], [-20, -20], 'b')
+    ax2.plot([af_step_list[0], af_step_list[-1]], [-100, -100], 'r')
     ax2.set_xlabel('AF peak (mT)')
     ax2.set_ylabel('S$_{diff}$ or S$_{ratio}$ (%)')
     ax2.set_xlim(0, np.nanmax(af_step))
@@ -4143,6 +4179,8 @@ def fin_pal_ARM_auto(X, V):
 
     # axes labels and limits
     ax3.set_xlim(0, np.nanmax(af_step))
+    ax3.plot([af_step_list[afpick], af_step_list[afpick]], [0, np.max(ys[:len(af_step)])*1.1], linestyle='--', color='green')
+
     ax3.set_ylim(0, np.max(ys) * 1.2)
     ax3.grid()
     ax3.set_title('ARM paleointensity estimates')
@@ -4154,7 +4192,6 @@ def fin_pal_ARM_auto(X, V):
     ax3.text(max(af_step)/2, -(0.4*np.max(ys)), r'mean: %.2f ± %.2f μT' % (selected_mean, mean_dev))
 
     plt.suptitle(f'ARM-based PI results for sample {name}')
-    plt.show()
 
     # save figure
     outdir = os.path.join(f'{name}_nrf')
@@ -4164,12 +4201,20 @@ def fin_pal_ARM_auto(X, V):
     plt.show()
     plt.pause(1)
 
+    # get stats for the chosen plateau
+    candidates.sort(key=lambda c: (abs(c['slope']), c['resid_std'], c['norm_slope']))
+    best = candidates[0]
+    lo, hi = best['af_range']
+
+
     # write PI values to text file
     vals_filename = os.path.join(outdir, f'PI_ARM_values_{name}.txt')
     with open(vals_filename, 'w') as paleo_data:
         for i in range(len(af_step)):
             paleo_data.write(f"{name}\t{af_step[i]}\t{ys[i]}\n")
-        paleo_data.write("\n Plateau selection averages")
+            
+        paleo_data.write("\n Plateau selection averages\n")
+        paleo_data.write(f"Best plateau: AF {lo:.2f}–{hi:.2f} mT | slope={best['slope']:.3g} ± {best['slope_se']:.3g}, \n")
         paleo_data.write(f'median: {selected_med:.2f} μT\n')
         paleo_data.write(f'mean: {selected_mean:.2f} ± {mean_dev:.2f} μT\n')
 
@@ -4179,6 +4224,9 @@ def fin_pal_ARM_auto(X, V):
     V['arm_selected_std'] = float(mean_dev)
     V['arm_selected_median'] = float(selected_med)
     V['arm_selected_iqr'] = float(iqr)
+    V['arm_1500_PI_mean'] = np.mean(V['arm_ys_lit_1500'][low_b:up_b+1])
+    V['arm_slope'] = round(best['slope'], 3)
+    #V['arm_1200_PI']
 
     return
 
@@ -4274,6 +4322,8 @@ def calc_PI_checks_SIRM(V, X):
     # Initialize arrays for PI and SIRM checks
     ys = np.zeros((100))
     std = np.zeros((100))
+    ys_lit_1500 = np.zeros(100)
+    
     cntfieldaf = cntfield
     af_step_list = []
     shortdiv = np.zeros((cntfield))
@@ -4325,6 +4375,7 @@ def calc_PI_checks_SIRM(V, X):
         sigm = sit * sumdi / (sit * sumxx - sumx * sumx)
         xa = af_nrm_n[i] / af_sirm_n[i]
         ys[i] = xa * mfit + cfit
+        ys_lit_1500[i] = xa * 1500
 
         # Linear fit with numpy polyfit for comparison
         p, cov = np.polyfit(af_sirm_new, field_t_new, 1, cov=True)
@@ -4387,7 +4438,8 @@ def calc_PI_checks_SIRM(V, X):
     V['shortdiv'] = shortdiv
     V['shortminus'] = shortminus
     V['ys'] = ys  
-
+    V['sirm_ys_lit_1500'] = ys_lit_1500
+    
     return (X, V)
 
 def calc_PI_checks_ARM(V, X):
@@ -4439,11 +4491,15 @@ def calc_PI_checks_ARM(V, X):
 
     # Normalize measured ARM demagnetization
     af_arm_n = X['af_arm']
+    af_sirm_n = X['af_irm']
     norm = np.mean(af_arm_n[0:3])
     af_arm_n_n = np.copy(af_arm_n)
     for i in range(len(af_arm_n)):
         af_arm_n_n[i] = af_arm_n[i] / norm
     V['af_arm_n_n'] = af_arm_n_n
+    ARM_lit = af_arm_n[0] 
+    SIRM_lit = af_sirm_n[0] 
+    scaler = ARM_lit/SIRM_lit
 
     # Prepare ARM plot data
     arm_p = armn[:ifield, :cntfield]
@@ -4478,6 +4534,7 @@ def calc_PI_checks_ARM(V, X):
     shortminus = np.zeros(cntfield)
     ys = np.zeros(100)
     std = np.zeros(100)
+    ys_lit_1500 = np.zeros(100)
 
     # Loop over each AF step to compute ARM-based paleointensity and quality checks
     for i in range(cntfieldaf):
@@ -4499,6 +4556,7 @@ def calc_PI_checks_ARM(V, X):
         # Scale measured NRM to regression
         xa = af_nrm_n[i] / af_arm_n[i] 
         ys[i] = xa * mfit + cfit
+        ys_lit_1500[i] = xa * 1500 * scaler
         sigma_y = np.sqrt(sigma_m**2 * xa**2 + sigma_b**2 + sigma_residual**2)
         std[i] = sigma_y * 1.96  # 95% confidence interval
 
@@ -4545,6 +4603,7 @@ def calc_PI_checks_ARM(V, X):
     V['arm_shortdiv'] = shortdiv
     V['arm_shortminus'] = shortminus
     V['arm_ys'] = ys
-
+    V['std'] = std
+    V['arm_ys_lit_1500'] = ys_lit_1500
 
     return X, V

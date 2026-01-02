@@ -97,7 +97,7 @@ def pick_preferred(entry, prefer_latest=True):
 
 
 # sample processing - like findfiles functions in original
-def process_sample(X, sample_basename, entry, prefer_latest=True):
+def process_sample(X, site_folder, sample_basename, entry, prefer_latest=True):
     """
     Populate X with file paths and paleo_results.dat handling, then call field_range(X).
     - entry is index[sample_basename]
@@ -122,41 +122,44 @@ def process_sample(X, sample_basename, entry, prefer_latest=True):
         print(f"[WARN] No SIRM file for sample {sample}")
 
 
-    file_exists = os.path.exists('paleo_results.dat')
+    # --- Results file path ---
+    results_filename = f"paleo_results_{site_folder}_frc.dat"
+    results_path = os.path.join(os.getcwd(), results_filename)
+    
     sample_copy = 1
-    if file_exists:
-        with open('paleo_results.dat', 'r') as bigf:
-            bigf.readline()
+    
+    # --- Read existing results if file exists ---
+    if os.path.exists(results_path):
+        with open(results_path, 'r') as bigf:
+            header = bigf.readline()  # skip header
             for my_line in bigf:
                 if not my_line.strip():
                     continue
-                line = my_line.split('\t')
-                if line[0].strip().lower() == sample.lower():
+                parts = my_line.split('\t')
+    
+                # match sample name
+                if parts[0].strip().lower() == sample.lower():
                     sample_copy += 1
                     try:
-                        X['min_field'] = float(line[10])
-                        X['max_field'] = float(line[11])
-                        X['nat_cool'] = float(line[12])
-                        X['curie_t'] = float(line[13])
-                        X['afval'] = float(line[14])
-                        X['SF'] = float(line[15])
-                        X['reset_limit_hc'] = float(line[16])
-                        X['reset_limit_hi'] = float(line[17])
-                        X['sf_list_correct'] = float(line[18])
+                        X['min_field'] = float(parts[1])
+                        X['max_field'] = float(parts[2])
+                        X['nat_cool'] = float(parts[3])
                     except (IndexError, ValueError):
-                        # existing line doesn't have expected columns or is malformed
-                        print(f"[WARN] Unexpected paleo_results.dat format for sample {sample} line: {my_line!r}")
-                        traceback.print_exc()
-
-        # write output file of important values for each sample
+                        print(f"[WARN] Existing record format mismatch for {sample}: {my_line.strip()}")
     else:
-        with open('paleo_results.dat', 'w') as bigf:
-            bigf.write('Sample name \t Repeat \t AF steps \t Range \t AF min \t AF max \t mean PI \t std mean \t median \t iqr median \t Min field \t Max field \t cooling time \t curie temp \t AF value \t SF \t max hc \t max hi \t SF_factor \n')
-
+        # Create file with NEW header
+        with open(results_path, 'w') as bigf:
+            bigf.write(
+                "Sample\tMinField\tMaxField\tCoolingTime\t"
+                "ARM_D_field(µT)\tCurieTemp\tSF\tAFpick\t"
+                "Plateau_SIRM\tSlope_SIRM\tSIRM_mean_PI\tSIRM_std\tSIRM_median_PI\tSIRM_iqr\tSIRM_lit_1500_PI\t"
+                "Plateau_ARM\tSlope_ARM\tARM_mean_PI\tARM_std\tARM_median_PI\tARM_iqr\tARM_lit_1500_PI\n"
+            )
+    
     X['sample_copy'] = sample_copy
-
-    # create output dir for sample if missing
-    outdir = f'{sample}_nrf'
+    
+       # create output dir for sample if missing
+    outdir = f'{sample}_frc'
     if not os.path.exists(outdir):
         os.makedirs(outdir, exist_ok=True)
 
@@ -164,7 +167,9 @@ def process_sample(X, sample_basename, entry, prefer_latest=True):
     print(f"Attempt {sample_copy} of running sample {sample}")
 
     X['min_field'] = 10
-    X['max_field'] = 50   
+    X['max_field'] = 50 
+    X['max_y'] = 50
+    X['min_y'] = -50
     return X
 
 # function to run all functions
@@ -206,7 +211,7 @@ def run_site(site_folder=None, all_data_root=None, exclude_dirs=None, prefer_lat
         try:
             print(f"\n--- Processing sample {sample} ---")
             # read in the individual data files and sort data
-            X = process_sample(X, sample, index[sample], prefer_latest=prefer_latest)
+            X = process_sample(X, site_folder, sample, index[sample], prefer_latest=prefer_latest)
             
             # demag and zijderfeld plots
             X = demag_data_generic_arm(X)
@@ -221,7 +226,7 @@ def run_site(site_folder=None, all_data_root=None, exclude_dirs=None, prefer_lat
             X = divide_mu0(X) 
             X = sym_norm_forcs(X)
             norm_rho_all(X) #keep as was 
-            plot_sample_FORC(X['Hc'], X['Hu'], X['rho_n'], X['SF'], X['name'],X['hcmaxa'],X['himaxa'],X['himina'])
+            plot_sample_FORC(X['Hc'], X['Hu'], X['rho_n'], X['SF'], X['name'],X['hcmaxa'],X['himaxa'],X['himina'], X['max_y'], X['min_y'])
             X = user_input(X)
             
             # simulate TRM, SIRM, TRM data, and use measured data to calc paleointensity
@@ -270,8 +275,44 @@ def run_site(site_folder=None, all_data_root=None, exclude_dirs=None, prefer_lat
                 if proceed:
                     break   # exit the outer while True and continue to next sample
                 # else: loop repeats and SIRM/ARM steps re-run
+            results_filename = f"paleo_results_{site_folder}_frc.dat"
+            results_path = os.path.join(os.getcwd(), results_filename)
+            
+            sirm_index = V['sirm_selected_plateau']
+            arm_index = V['arm_selected_plateau']
+            af_step = X['af_step']
+            low, high = sirm_index
+            sirm_plat = (round(af_step[low], 2), round(af_step[high], 2))
+            low2, high2 = arm_index
+            arm_plat = (round(af_step[low2], 2), round(af_step[high2], 2))
 
 
+            with open(results_path, 'a') as bigf:
+                bigf.write(
+                   f"{sample}\t"
+                   f"{X.get('min_field', 'NA')}\t"
+                   f"{X.get('max_field', 'NA')}\t"
+                   f"{X.get('nat_cool', 'NA')}\t"
+                   f"{X.get('arm_bias_uT', 'NA')}\t"
+                   f"{X.get('curie_t', 'NA')}\t"
+                   f"{X.get('SF', 'NA')}\t"
+                   f"{X.get('af_pick', 'NA')}\t"
+                   f"{sirm_plat}\t"
+                   f"{V.get('sirm_slope', 'NA')}\t"
+                   f"{V.get('sirm_selected_mean', 'NA'):.3f}\t"
+                   f"{V.get('sirm_selected_std', 'NA'):.3f}\t"
+                   f"{V.get('sirm_selected_median', 'NA'):.3f}\t"
+                   f"{V.get('sirm_selected_iqr', 'NA'):.3f}\t"
+                   f"{V.get('sirm_1500_PI_mean', 'NA'):.3f}\t"
+                   f"{arm_plat}\t"
+                   f"{V.get('arm_slope', 'NA')}\t"
+                   f"{V.get('arm_selected_mean', 'NA'):.3f}\t"
+                   f"{V.get('arm_selected_std', 'NA'):.3f}\t"
+                   f"{V.get('arm_selected_median', 'NA'):.3f}\t"
+                   f"{V.get('arm_selected_iqr', 'NA'):.3f}\n"
+                   f"{V.get('arm_1500_PI_mean', 'NA'):.3f}\t"
+               )
+                   
         except Exception as e:
             print(f"[ERROR] Sample {sample} failed: {e}")
             traceback.print_exc()
@@ -2099,7 +2140,7 @@ def find_plot_fwhm(X):
         # Plot points color-coded the same as plot 1
         for i, sf in enumerate(polySF):
             color = color_cycle[int(sf-2) % 10]  # same mapping as plot1 (SF 2->0, 3->1 ...)
-            ax2.scatter(sf, polyfwhm[i]*1000, color=color, s=60, label=f'SF={SF}')
+            ax2.scatter(sf, polyfwhm[i]*1000, color=color, s=60, label=f'SF={sf}')
         
    
         ax2.set_title('Smoothing factor (SF) vs FWHM using SF 2-5')
@@ -2309,7 +2350,7 @@ def norm_rho_all(X):
     return(X)    
 
   
-def plot_sample_FORC(x, y, z, SF, sample_name, hcmaxa, himaxa, himina):
+def plot_sample_FORC(x, y, z, SF, sample_name, hcmaxa, himaxa, himina, max_y, min_y):
     """
     Plot a neat FORC (First-Order Reversal Curve) diagram for a given sample and smoothing factor.
     
@@ -2367,16 +2408,16 @@ def plot_sample_FORC(x, y, z, SF, sample_name, hcmaxa, himaxa, himina):
     ax.contour(xp, yp, zn, con, colors='k', linewidths=0.6)
 
     # Set axis labels
-    ax.set_xlabel(r'$\mathrm{h_{c}}$ (mT)', fontsize=14)
-    ax.set_ylabel(r'$\mathrm{h_{s}}$ (mT)', fontsize=14)
+    ax.set_xlabel(r'$\mathrm{B_{c}}$ (mT)', fontsize=14)
+    ax.set_ylabel(r'$\mathrm{B_{i}}$ (mT)', fontsize=14)
 
     # Set axis limits
     ax.set_xlim(0, hcmaxa)
-    ax.set_ylim(himina, himaxa)
+    ax.set_ylim(min_y, max_y)
 
     # plot diag
-    ax.plot([0, hcmaxa], [0, himina], 'k--', linewidth=1, label='$H_a$') 
-    ax.plot([0, hcmaxa], [0, hcmaxa], 'k-', linewidth=1, label='$H_b$') 
+    #ax.plot([0, hcmaxa], [0, himina], 'k--', linewidth=1, alpha=0.5,  label='$B_a$') 
+    #ax.plot([0, hcmaxa], [0, hcmaxa], 'k-', linewidth=1, alpha = 0.5, label='$B_b$') 
  
     
     # Customize tick parameters
@@ -2391,14 +2432,14 @@ def plot_sample_FORC(x, y, z, SF, sample_name, hcmaxa, himaxa, himina):
     ax.set_title(f'{sample_name} FORC diagram, SF = {SF}', fontsize=16)
 
     # Add grid with dashed lines and slight transparency
-    ax.grid(True, linestyle='--', alpha=0.5)
+    ax.grid(True, alpha=0.2)
 
     # Adjust layout for spacing
     plt.tight_layout()
-    plt.legend()
+    #plt.legend()
 
     # Construct filename and ensure folder exists
-    filename = os.path.join(f'{sample_name}',
+    filename = os.path.join(f'{sample_name}_frc',
                             f'FORC_diagram_sample_{sample_name}_SF{SF}.pdf')
     os.makedirs(os.path.dirname(filename), exist_ok=True)
 
@@ -2861,10 +2902,9 @@ def user_input(X):
         while (quest_res == 0):
             # Ask whether user wants to modify hc and hi
             quest = input(
-                'Do you want to change the maximum hc and/or hi value from max hc = {} and min hi = {} from the FORC file? (Y or N)'.format(
-                    int(X['hcmaxa']), int(X['himina'])
-                )
-            )
+                'Do you want to change the maximum Bc and/or Bi values from max Bc = {}, max Bi = {} and min Bi = {} from the FORC file? (Y or N)'.format(
+                    int(X['hcmaxa']), int(X['max_y']), int(X['min_y'])))
+
 
             if (quest == 'Y'):
                 quest_res = 1.
@@ -2873,7 +2913,7 @@ def user_input(X):
                 hc_l = 0
                 while (hc_l == 0):                
                     try:
-                        max_input_hc = input("Set maximum hc (mT) using the above FORC diagram, if unchanged enter 0:" )
+                        max_input_hc = input("Set maximum Bc (mT) using the above FORC diagram, if unchanged enter 0:" )
                         max_input_hc = float(max_input_hc)
                         if (max_input_hc == 0):
                             max_input_hc = X['hcmaxa']                            
@@ -2881,15 +2921,28 @@ def user_input(X):
                     except ValueError:
                         print('Not a number. Please input a number.')
                         hc_l = 0
+                
+                # Prompt for minimum hi value
+                hi_u = 0
+                while (hi_u == 0):
+                    try:
+                        max_input_hi = input("Set maximum Bi (mT) using the above FORC diagram, if unchanged enter 0:" )
+                        max_input_hi = float(max_input_hi)
+                        if (max_input_hi == 0):
+                            max_input_hi = X['max_y']              
+                        hi_u = 1
+                    except ValueError:
+                        print('Not a number. Please input a number.')
+                        hi_u = 0
 
                 # Prompt for minimum hi value
                 hi_l = 0
                 while (hi_l == 0):
                     try:
-                        max_input_hi = input("Set minimum hs (mT) using the above FORC diagram, if unchanged enter 0:" )
-                        max_input_hi = float(max_input_hi)
+                        min_input_hi = input("Set minimum Bi (mT) using the above FORC diagram, if unchanged enter 0:" )
+                        min_input_hi = float(min_input_hi)
                         if (max_input_hi == 0):
-                            max_input_hi = X['himina']              
+                            max_input_hi = X['min_y']              
                         hi_l = 1
                     except ValueError:
                         print('Not a number. Please input a number.')
@@ -2898,10 +2951,12 @@ def user_input(X):
                 # Update the dictionary with new limits
                 X['hcmaxa'] = float(max_input_hc)
                 X['himina'] = float(max_input_hi)
-                print('FORC limits: Max hc = {}, max hi = {}'.format(X['hcmaxa'], X['himina']))          
+                X['min_y'] = float(min_input_hi)
+                X['max_y'] = float(max_input_hi)
+                print('FORC limits: Max Bc = {}, max Bi = {}'.format(X['hcmaxa'], X['himina']))          
 
                 # Re-plot the FORC diagram with the new limits
-                plot_sample_FORC(X['Hc'], X['Hu'], X['rho_n'], X['SF'], X['name'],X['hcmaxa'],X['himaxa'],X['himina'])
+                plot_sample_FORC(X['Hc'], X['Hu'], X['rho_n'], X['SF'], X['name'],X['hcmaxa'],X['himaxa'],X['himina'], X['max_y'], X['min_y'])
                         
             if (quest == 'N'):
                 quest_res = 1.
@@ -4024,7 +4079,8 @@ def plot_zplot(X):
     """
     
     # -------------------- Set defaults --------------------
-    X['nat_cool'] = 720  # Default natural cooling time in hours
+    user_cooling = float(input("Input the cooling time (hours). 720 hours is 1 month."))
+    X['nat_cool'] = user_cooling  # Default natural cooling time in hours
     c_l = 0
 
     # -------------------- Handle Curie temperature --------------------
@@ -4117,7 +4173,7 @@ def plot_zplot(X):
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 
         # Save plot as PDF
-        filename = os.path.join(f'{X["name"]}_nrf', f'zijderveld_plot_{X["name"]}.pdf')
+        filename = os.path.join(f'{X["name"]}_frc', f'zijderveld_plot_{X["name"]}.pdf')
         os.makedirs(os.path.dirname(filename), exist_ok=True)
         plt.savefig(filename)
         plt.show()
@@ -4428,28 +4484,36 @@ def TRM_acq_w_arm(X, V):
 
    
     
-def find_and_report_plateau_candidates_regression(af_step, ys, window=3, slope_tol=None):
+def find_and_report_plateau_candidates_regression(af_pick, af_step, ys, window=3, slope_tol=None):
     """
-    identifies plateau regions via moving-window linear regression.
-    returns the best plateau (lowest |slope|) and all candidate windows.
-    
+    Identifies plateau regions via moving-window linear regression.
+    Only considers AF steps >= af_pick.
+    Returns the best plateau (lowest |slope|) and all candidate windows.
     """
+
     af = np.asarray(af_step, dtype=float)
     ys = np.asarray(ys, dtype=float)
+    
     n = len(af)
     if n < window:
         print("Not enough AF steps for regression window.")
         return None, []
 
+    # --- NEW: restrict analysis to AF values >= af_pick ---
+    start_idx = np.argmax(af >= af[af_pick])   # first index where AF >= af_pick
+
     cand = []
-    for i in range(n - window + 1):
+    
+    # Loop only from start_idx forward
+    for i in range(start_idx, n - window + 1):
+
         xi = af[i:i + window]
         yi = ys[i:i + window]
 
         if np.any(np.isnan(xi)) or np.any(np.isnan(yi)):
             continue
         if np.allclose(xi, xi[0]):
-            continue  # zero spacing
+            continue
 
         try:
             p, cov = np.polyfit(xi, yi, 1, cov=True)
@@ -4473,9 +4537,10 @@ def find_and_report_plateau_candidates_regression(af_step, ys, window=3, slope_t
         })
 
     if not cand:
-        print("No valid regression windows found.")
+        print(f"No valid regression windows found after AF pick ({af_pick} mT).")
         return None, []
 
+    # Sort by flattest slope, then lowest noise
     cand.sort(key=lambda c: (abs(c['slope']), c['resid_std'], c['norm_slope']))
     best = cand[0]
     lo, hi = best['af_range']
@@ -4528,18 +4593,51 @@ def fin_pal_SIRM_auto(X, V):
     name = X['name']
     cntfield = X['cntfield']
     demagstep = X['af_step'] 
+    afpick = X['af_pick']
+    print(afpick)
 
     # print AF steps for user info
     print('AF Demag spectra for the NRM (use to pick the AF steps)')
-    for i, a in enumerate(demagstep):
-        print('AF field step', i, a)
+    for i in range(len(demagstep)):
+        print(f"AF field step {i}: {demagstep[i]:.1f}")
         
     af_step = np.asarray(af_step)
     ys_arr = np.asarray(ys)
 
     # attempt automatic plateau selection
-    slope_tol = 0.02
-    plateau_pair, candidates = find_and_report_plateau_candidates_regression(af_step, ys_arr, window=3, slope_tol=None)
+    # attempt automatic plateau selection
+    while True:
+        slope_tol_input = input(
+            "\n------------------------------------------------------------\n"
+            " Enter a slope tolerance value.\n"
+            " This should be **tan(θ)** where θ is the maximum slope angle of the "
+            "plateau you're willing to accept.\n\n"
+            " Reference values:\n"
+            "   •  5°  →  0.08 – 0.09\n"
+            "   • 10°  →  0.17 – 0.18\n"
+            "   • 20°  →  0.36 – 0.37\n"
+            "   • 30°  →  0.57 – 0.58\n\n"
+            " Options:\n"
+            "   • Enter a numeric value between 0 and 1\n"
+            "   • Enter 0 to select manually\n"
+            "   • Enter 'K' to use the default = 0.1\n"
+            "------------------------------------------------------------\n"
+        )
+    
+        if slope_tol_input.upper() == 'K':
+            slope_tol = 0.1
+            break
+    
+        try:
+            slope_tol = float(slope_tol_input)
+            if 0 <= slope_tol <= 1:
+                break
+            else:
+                print("Tolerance must be between 0 and 1.")
+        except ValueError:
+            print("Not a valid number. Please enter a number between 0 and 1, 0 for manual selection, or K for default.")
+
+    plateau_pair, candidates = find_and_report_plateau_candidates_regression(afpick, af_step, ys_arr, window=3, slope_tol=None)
     slope = abs(candidates[0]['norm_slope'])                                                           
     
     # check slope against threshold, use manual selection if too steep
@@ -4571,13 +4669,13 @@ def fin_pal_SIRM_auto(X, V):
         low_b, up_b = plateau_pair
         print(f"Proceeding with automatically chosen plateau: AF steps {af_step[low_b]:.2f} to {af_step[up_b]:.2f} mT2")
         # stats for automatic selection
-        selected_mean = np.mean(ys[low_b:up_b+1])
-        mean_dev = np.std(ys[low_b:up_b+1])
-        selected_med = np.median(ys[low_b:up_b+1])
-        q3, q1 = np.percentile(ys[low_b:up_b+1], [75, 25])
-        iqr = q3 - q1
-        print(f"median: {selected_med:.2f} μT")
-        print(f"mean: {selected_mean:.2f} ± {mean_dev:.2f} μT")
+    selected_mean = np.mean(ys[low_b:up_b+1])
+    mean_dev = np.std(ys[low_b:up_b+1])
+    selected_med = np.median(ys[low_b:up_b+1])
+    q3, q1 = np.percentile(ys[low_b:up_b+1], [75, 25])
+    iqr = q3 - q1
+    print(f"median: {selected_med:.2f} μT")
+    print(f"mean: {selected_mean:.2f} ± {mean_dev:.2f} μT")
 
     # calculate plateau stats
     selected_vals = ys[low_b:up_b+1]
@@ -4634,7 +4732,7 @@ def fin_pal_SIRM_auto(X, V):
 
     # vertical line marking af_pick
     afpick = X.get('af_pick', 0)
-    ax3.plot([af_step[afpick], af_step[afpick]], [0, np.max(ys) * 1.1], color='green')
+    ax3.plot([af_step[afpick], af_step[afpick]], [0, np.max(ys) * 1.1], linestyle='--', color='green')
 
     # axes / labels
     ax3.set_xlim(0, np.nanmax(af_step))
@@ -4648,15 +4746,22 @@ def fin_pal_SIRM_auto(X, V):
     ax3.text(max(af_step) / 2, -(0.3 * np.max(ys)), f'median: {selected_med:.2f} μT')
     ax3.text(max(af_step) / 2, -(0.4 * np.max(ys)), f'mean: {selected_mean:.2f} ± {mean_dev:.2f} μT')
 
-    plt.suptitle(f'PI SIRM results for sample {name}')
+    plt.suptitle(f'PI SIRM results for sample {name}',  y=1.05)
 
     # save figure and values
-    outdir = os.path.join(f'{name}_nrf')
+    outdir = os.path.join(f'{name}_frc')
     os.makedirs(outdir, exist_ok=True)
     filename = os.path.join(outdir, f'PI_SIRM_{name}.pdf')
     plt.savefig(filename, bbox_inches='tight', pad_inches=0.5)
+    
     plt.show()
     plt.pause(1)
+    
+    # get stats for the chosen plateau
+    candidates.sort(key=lambda c: (abs(c['slope']), c['resid_std'], c['norm_slope']))
+    best = candidates[0]
+    lo, hi = best['af_range']
+
 
     # write PI values to text file
     vals_filename = os.path.join(outdir, f'PI_SIRM_values_{name}.txt')
@@ -4664,7 +4769,8 @@ def fin_pal_SIRM_auto(X, V):
         for i in range(len(af_step)):
             paleo_data.write(f"{name}\t{af_step[i]}\t{ys[i]}\n")
             
-        paleo_data.write("\n Plateau selection averages")
+        paleo_data.write("\n Plateau selection averages\n")
+        paleo_data.write(f"Best plateau: AF {lo:.2f}–{hi:.2f} mT | slope={best['slope']:.3g} ± {best['slope_se']:.3g}, \n")
         paleo_data.write(f'median: {selected_med:.2f} μT\n')
         paleo_data.write(f'mean: {selected_mean:.2f} ± {mean_dev:.2f} μT\n')
 
@@ -4674,6 +4780,8 @@ def fin_pal_SIRM_auto(X, V):
     V['sirm_selected_std'] = float(mean_dev)
     V['sirm_selected_median'] = float(selected_med)
     V['sirm_selected_iqr'] = float(iqr)
+    V['sirm_1500_PI_mean'] = np.mean(V['sirm_ys_lit_1500'][low_b:up_b+1])
+    V['sirm_slope'] = round(best['slope'], 3)
 
     return
 
@@ -4712,19 +4820,53 @@ def fin_pal_ARM_auto(X, V):
     name = X['name']       # sample name
     cntfield = X['cntfield']  
     demagstep = X['af_step']  
+    afpick = X['af_pick']
+    af_step_list = af_step
+    print(afpick)
 
     # print AF steps for user reference
     print('AF Demag spectra for the ARM (use to pick the AF steps)')
     for i in range(len(demagstep)):
-        print('AF field step', i, demagstep[i])
+        print(f"AF field step {i}: {demagstep[i]:.1f}")
 
     # convert to arrays for calculations
     af_step = np.asarray(af_step)
     ys_arr = np.asarray(ys)
 
     # attempt automatic plateau selection
-    slope_tol = 0.02
-    plateau_pair, candidates = find_and_report_plateau_candidates_regression(af_step, ys_arr, window=3, slope_tol=None)
+    while True:
+        slope_tol_input = input(
+            "\n------------------------------------------------------------\n"
+            " Enter a slope tolerance value.\n"
+            " This should be **tan(θ)** where θ is the maximum slope angle of the "
+            "plateau you're willing to accept.\n\n"
+            " Reference values:\n"
+            "   •  5°  →  0.08 – 0.09\n"
+            "   • 10°  →  0.17 – 0.18\n"
+            "   • 20°  →  0.36 – 0.37\n"
+            "   • 30°  →  0.57 – 0.58\n\n"
+            " Options:\n"
+            "   • Enter a numeric value between 0 and 1\n"
+            "   • Enter 0 to select manually\n"
+            "   • Enter 'K' to use the default = 0.1\n"
+            "------------------------------------------------------------\n"
+        )
+    
+        if slope_tol_input.upper() == 'K':
+            slope_tol = 0.1
+            break
+    
+        try:
+            slope_tol = float(slope_tol_input)
+            if 0 <= slope_tol <= 1:
+                break
+            else:
+                print("Tolerance must be between 0 and 1.")
+        except ValueError:
+            print("Not a valid number. Please enter a number between 0 and 1, 0 for manual selection, or K for default.")
+
+    
+    plateau_pair, candidates = find_and_report_plateau_candidates_regression(afpick, af_step, ys_arr, window=3, slope_tol=None)
     slope = abs(candidates[0]['norm_slope'])
 
     # check slope against threshold; fallback to manual selection if too steep
@@ -4756,14 +4898,14 @@ def fin_pal_ARM_auto(X, V):
         low_b, up_b = plateau_pair
         print(f"Proceeding with automatically chosen plateau: AF steps {af_step[low_b]:.2f} to {af_step[up_b]:.2f} mT")
         
-        # compute basic statistics for selected plateau
-        selected_mean = np.mean(ys[low_b:up_b+1])
-        mean_dev = np.std(ys[low_b:up_b+1])
-        selected_med = np.median(ys[low_b:up_b+1])
-        q3, q1 = np.percentile(ys[low_b:up_b+1], [75, 25])
-        iqr = q3 - q1
-        print(f"median: {selected_med:.2f} μT")
-        print(f"mean: {selected_mean:.2f} ± {mean_dev:.2f} μT")
+    # compute basic statistics for selected plateau
+    selected_mean = np.mean(ys[low_b:up_b+1])
+    mean_dev = np.std(ys[low_b:up_b+1])
+    selected_med = np.median(ys[low_b:up_b+1])
+    q3, q1 = np.percentile(ys[low_b:up_b+1], [75, 25])
+    iqr = q3 - q1
+    print(f"median: {selected_med:.2f} μT")
+    print(f"mean: {selected_mean:.2f} ± {mean_dev:.2f} μT")
 
     # begin plots
     plt.rcParams.update({'font.size': 13})
@@ -4782,8 +4924,13 @@ def fin_pal_ARM_auto(X, V):
     ax1.grid()
 
     # (b) ARM checks: S_ratio and S_diff
+    af_step_list = af_step
     ax2.plot(af_step, V.get('arm_shortdiv', np.zeros_like(af_step)), marker='o', color='r', label='S$_{ratio}$')
     ax2.plot(af_step, V.get('arm_shortminus', np.zeros_like(af_step)), marker='o', color='b', label='S$_{diff}$')
+    ax2.plot(af_step_list, [20]*len(af_step_list), 'b')
+    ax2.plot(af_step_list, [100]*len(af_step_list), 'r')
+    ax2.plot([af_step_list[0], af_step_list[-1]], [-20, -20], 'b')
+    ax2.plot([af_step_list[0], af_step_list[-1]], [-100, -100], 'r')
     ax2.set_xlabel('AF peak (mT)')
     ax2.set_ylabel('S$_{diff}$ or S$_{ratio}$ (%)')
     ax2.set_xlim(0, np.nanmax(af_step))
@@ -4807,6 +4954,8 @@ def fin_pal_ARM_auto(X, V):
     # axes labels and limits
     ax3.set_xlim(0, np.nanmax(af_step))
     ax3.set_ylim(0, np.max(ys) * 1.2)
+    ax3.plot([af_step_list[afpick], af_step_list[afpick]],
+         [0, np.max(ys[:len(af_step_list)]) * 1.1], linestyle='--', color='green')
     ax3.grid()
     ax3.set_title('ARM paleointensity estimates')
     ax3.set_xlabel('AF peak (mT)')
@@ -4815,24 +4964,28 @@ def fin_pal_ARM_auto(X, V):
     # show statistics on figure
     ax3.text(max(af_step)/2, -(0.3*np.max(ys)), r'median: %.2f μT' % selected_med)
     ax3.text(max(af_step)/2, -(0.4*np.max(ys)), r'mean: %.2f ± %.2f μT' % (selected_mean, mean_dev))
-
-    plt.suptitle(f'ARM-based PI results for sample {name}')
-    plt.show()
+    plt.suptitle(f'ARM-based PI results for sample {name}', y=1.05)
 
     # save figure
-    outdir = os.path.join(f'{name}_nrf')
+    outdir = os.path.join(f'{name}_frc')
     os.makedirs(outdir, exist_ok=True)
     filename = os.path.join(outdir, f'PI_ARM_{name}.pdf')
     plt.savefig(filename, bbox_inches='tight', pad_inches=0.5)
+    
     plt.show()
     plt.pause(1)
+    
+    candidates.sort(key=lambda c: (abs(c['slope']), c['resid_std'], c['norm_slope']))
+    best = candidates[0]
+    lo, hi = best['af_range']
 
     # write PI values to text file
     vals_filename = os.path.join(outdir, f'PI_ARM_values_{name}.txt')
     with open(vals_filename, 'w') as paleo_data:
         for i in range(len(af_step)):
             paleo_data.write(f"{name}\t{af_step[i]}\t{ys[i]}\n")
-        paleo_data.write("\n Plateau selection averages")
+        paleo_data.write("\n Plateau selection averages\n")
+        paleo_data.write(f"Best plateau: AF {lo:.2f}–{hi:.2f} mT | slope={best['slope']:.3g} ± {best['slope_se']:.3g}, \n")
         paleo_data.write(f'median: {selected_med:.2f} μT\n')
         paleo_data.write(f'mean: {selected_mean:.2f} ± {mean_dev:.2f} μT\n')
 
@@ -4842,6 +4995,8 @@ def fin_pal_ARM_auto(X, V):
     V['arm_selected_std'] = float(mean_dev)
     V['arm_selected_median'] = float(selected_med)
     V['arm_selected_iqr'] = float(iqr)
+    V['arm_1500_PI_mean'] = np.mean(V['arm_ys_lit_1500'][low_b:up_b+1])
+    V['arm_slope'] = round(best['slope'], 3)
 
     return
 
@@ -4937,6 +5092,8 @@ def calc_PI_checks_SIRM(V, X):
     # Initialize arrays for PI and SIRM checks
     ys = np.zeros((100))
     std = np.zeros((100))
+    ys_lit_1500 = np.zeros(100)
+    
     cntfieldaf = cntfield
     af_step_list = []
     shortdiv = np.zeros((cntfield))
@@ -4988,6 +5145,7 @@ def calc_PI_checks_SIRM(V, X):
         sigm = sit * sumdi / (sit * sumxx - sumx * sumx)
         xa = af_nrm_n[i] / af_sirm_n[i]
         ys[i] = xa * mfit + cfit
+        ys_lit_1500[i] = xa * 1500
 
         # Linear fit with numpy polyfit for comparison
         p, cov = np.polyfit(af_sirm_new, field_t_new, 1, cov=True)
@@ -5038,7 +5196,7 @@ def calc_PI_checks_SIRM(V, X):
     ax3.errorbar(af_step, ys[:len(af_step)], yerr=std[:len(af_step)], fmt='o', ecolor='b', capsize=4, elinewidth=1.5)
     ax3.set_xlim(0, np.nanmax(af_step_list)*1.1)
     ax3.set_ylim(0, np.max(ys)*1.1)
-    ax3.plot([af_step_list[afpick], af_step_list[afpick]], [0, np.max(ys[:len(af_step)])*1.1], color='green')
+    ax3.plot([af_step_list[afpick], af_step_list[afpick]], [0, np.max(ys[:len(af_step)])*1.1], color='green', linestyle='--')
     ax3.set_xlabel('AF peak (mT)')
     ax3.set_ylabel('paleointensity (\u03BCT)')
     ax3.grid()
@@ -5049,7 +5207,8 @@ def calc_PI_checks_SIRM(V, X):
     # Store results in V
     V['shortdiv'] = shortdiv
     V['shortminus'] = shortminus
-    V['ys'] = ys  
+    V['ys'] = ys
+    V['sirm_ys_lit_1500'] = ys_lit_1500
 
     return (X, V)
 
@@ -5102,11 +5261,15 @@ def calc_PI_checks_ARM(V, X):
 
     # Normalize measured ARM demagnetization
     af_arm_n = X['af_arm']
+    af_sirm_n = X['af_irm']
     norm = np.mean(af_arm_n[0:3])
     af_arm_n_n = np.copy(af_arm_n)
     for i in range(len(af_arm_n)):
         af_arm_n_n[i] = af_arm_n[i] / norm
     V['af_arm_n_n'] = af_arm_n_n
+    ARM_lit = af_arm_n[0] 
+    SIRM_lit = af_sirm_n[0] 
+    scaler = ARM_lit/SIRM_lit
 
     # Prepare ARM plot data
     arm_p = armn[:ifield, :cntfield]
@@ -5141,6 +5304,7 @@ def calc_PI_checks_ARM(V, X):
     shortminus = np.zeros(cntfield)
     ys = np.zeros(100)
     std = np.zeros(100)
+    ys_lit_1500 = np.zeros(100)
 
     # Loop over each AF step to compute ARM-based paleointensity and quality checks
     for i in range(cntfieldaf):
@@ -5162,6 +5326,7 @@ def calc_PI_checks_ARM(V, X):
         # Scale measured NRM to regression
         xa = af_nrm_n[i] / af_arm_n[i] 
         ys[i] = xa * mfit + cfit
+        ys_lit_1500[i] = xa * 1500 * scaler
         sigma_y = np.sqrt(sigma_m**2 * xa**2 + sigma_b**2 + sigma_residual**2)
         std[i] = sigma_y * 1.96  # 95% confidence interval
 
@@ -5194,7 +5359,7 @@ def calc_PI_checks_ARM(V, X):
     ax3.errorbar(af_step_list, ys[:len(af_step_list)], yerr=std[:len(af_step_list)],
                  fmt='o', ecolor='b', capsize=4, elinewidth=1.5)
     ax3.plot([af_step_list[afpick], af_step_list[afpick]],
-             [0, np.max(ys[:len(af_step_list)]) * 1.1], color='green')
+             [0, np.max(ys[:len(af_step_list)]) * 1.1], linestyle='--', color='green')
     ax3.set_xlim(0, np.nanmax(af_step_list) * 1.1)
     ax3.set_ylim(0, np.max(ys) * 1.1)
     ax3.set_xlabel('AF peak (mT)')
@@ -5208,6 +5373,7 @@ def calc_PI_checks_ARM(V, X):
     V['arm_shortdiv'] = shortdiv
     V['arm_shortminus'] = shortminus
     V['arm_ys'] = ys
-
+    V['std'] = std
+    V['arm_ys_lit_1500'] = ys_lit_1500
 
     return X, V
