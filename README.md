@@ -1,9 +1,9 @@
 ## Using the Preisach method to estimate paleointensities
 
-This repo tracks code developed for my MSci project.
-The project aims to develop paleointensity estimation methods which use FORC and SORC-type data to simulate expected demagnetisation, and compare to measured demagnetisation to obtain an intensity estimate.
+This repo tracks code developed for my (Kelly Baker) MSci project at Imperial College London.
+The project develops paleointensity estimation methods which use FORC and SORC-type data from igneous samples to simulate expected demagnetisation, and compare to the measured demagnetisation to obtain a palaeointensity estimate.
 
-The code allows you to obtain the estimates from FORC and SORC-type (remFORC), as well as the plotted materials. The code is user-led and allows for parameters to be changed as desired. The repo includes sample data for both the auto-run notebooks and the manual notebooks.
+The code allows you to obtain the palaeoestimates from FORC and SORC-type (remFORC) inputs. The code is user-led and allows for parameters such as cooling time and Curie temperature to be changed as required. The repo includes sample data for both the auto-run notebooks and the manual notebooks. The input data format is in the style 'lisa', which can be obtained from typical IAPD formats.
 
 ### Project Abstract
 
